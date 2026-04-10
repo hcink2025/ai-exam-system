@@ -43,6 +43,9 @@
             <button onclick="showRandomQuiz()" class="px-4 py-2 bg-green-500 text-white rounded">随机测验</button>
             <button onclick="showMockExam()" class="px-4 py-2 bg-purple-500 text-white rounded">模拟考试</button>
             <button onclick="clearAll()" class="px-4 py-2 bg-red-500 text-white rounded">清空</button>
+            <span id="progressIndicator" class="px-4 py-2 bg-yellow-100 text-yellow-700 rounded text-sm hidden">
+                <i class="fa fa-save"></i> 进度已保存
+            </span>
             <input type="text" id="searchInput" placeholder="搜索..." class="px-4 py-2 border rounded w-80 bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-yellow-500" onkeyup="searchQuestions()">
         </div>
     </div>
@@ -136,12 +139,126 @@ var wrongQuestions = {};  // 易错题记录
 var quizMode = false;
 var quizQuestions = [];
 
+// localStorage 持久化存储键名
+var STORAGE_KEYS = {
+    userAnswers: 'exam_userAnswers',
+    submittedQuestions: 'exam_submittedQuestions',
+    wrongQuestions: 'exam_wrongQuestions',
+    currentPage: 'exam_currentPage',
+    currentFilter: 'exam_currentFilter'
+};
+
+// 保存答题状态到 localStorage
+function saveProgress() {
+    try {
+        localStorage.setItem(STORAGE_KEYS.userAnswers, JSON.stringify(userAnswers));
+        localStorage.setItem(STORAGE_KEYS.submittedQuestions, JSON.stringify(submittedQuestions));
+        localStorage.setItem(STORAGE_KEYS.wrongQuestions, JSON.stringify(wrongQuestions));
+        localStorage.setItem(STORAGE_KEYS.currentPage, currentPage.toString());
+        localStorage.setItem(STORAGE_KEYS.currentFilter, currentFilter);
+
+        // 显示保存提示
+        var indicator = document.getElementById('progressIndicator');
+        if (indicator) {
+            indicator.classList.remove('hidden');
+            setTimeout(function() {
+                indicator.classList.add('hidden');
+            }, 2000);
+        }
+    } catch (e) {
+        console.warn('保存进度失败:', e);
+    }
+}
+
+// 从 localStorage 加载答题状态
+function loadProgress() {
+    try {
+        var savedUserAnswers = localStorage.getItem(STORAGE_KEYS.userAnswers);
+        var savedSubmitted = localStorage.getItem(STORAGE_KEYS.submittedQuestions);
+        var savedWrong = localStorage.getItem(STORAGE_KEYS.wrongQuestions);
+        var savedPage = localStorage.getItem(STORAGE_KEYS.currentPage);
+        var savedFilter = localStorage.getItem(STORAGE_KEYS.currentFilter);
+
+        if (savedUserAnswers) userAnswers = JSON.parse(savedUserAnswers);
+        if (savedSubmitted) submittedQuestions = JSON.parse(savedSubmitted);
+        if (savedWrong) wrongQuestions = JSON.parse(savedWrong);
+        if (savedPage) currentPage = parseInt(savedPage, 10);
+        if (savedFilter) currentFilter = savedFilter;
+    } catch (e) {
+        console.warn('加载进度失败:', e);
+    }
+}
+
+// 清除所有答题记录
+function clearProgress() {
+    if (confirm('确定要清除所有答题记录吗？此操作不可恢复！')) {
+        userAnswers = {};
+        submittedQuestions = {};
+        wrongQuestions = {};
+        currentPage = 1;
+        currentFilter = 'all';
+        localStorage.removeItem(STORAGE_KEYS.userAnswers);
+        localStorage.removeItem(STORAGE_KEYS.submittedQuestions);
+        localStorage.removeItem(STORAGE_KEYS.wrongQuestions);
+        localStorage.removeItem(STORAGE_KEYS.currentPage);
+        localStorage.removeItem(STORAGE_KEYS.currentFilter);
+        document.getElementById('searchInput').value = '';
+        init();
+    }
+}
+
 function init() {
+    // 先加载保存的进度
+    loadProgress();
+
+    // 恢复筛选状态
+    if (currentFilter) {
+        var filterBtns = document.querySelectorAll('[onclick^="setFilter"]');
+        filterBtns.forEach(function(btn) {
+            var filterValue = btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+            if (filterValue === currentFilter) {
+                btn.classList.add('bg-blue-500', 'text-white');
+                btn.classList.remove('bg-gray-200');
+            } else {
+                btn.classList.remove('bg-blue-500', 'text-white');
+                btn.classList.add('bg-gray-200');
+            }
+        });
+    }
+
     document.getElementById('singleCount').textContent = questionsData.filter(function(q) { return q.type === '单选'; }).length;
     document.getElementById('multiCount').textContent = questionsData.filter(function(q) { return q.type === '多选'; }).length;
     document.getElementById('judgeCount').textContent = questionsData.filter(function(q) { return q.type === '判断'; }).length;
     updateWrongCount();
     renderQuestions();
+
+    // 显示恢复提示
+    var answeredCount = Object.keys(submittedQuestions).length;
+    if (answeredCount > 0) {
+        showRestoreNotification(answeredCount);
+    }
+}
+
+// 显示恢复进度提示
+function showRestoreNotification(count) {
+    var notification = document.createElement('div');
+    notification.id = 'restoreNotification';
+    notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3';
+    notification.innerHTML = `
+        <i class="fa fa-check-circle"></i>
+        <span>已恢复答题进度，已完成 ${count} 题</span>
+        <button onclick="this.parentElement.remove()" class="ml-2 hover:bg-green-600 rounded px-2">
+            <i class="fa fa-times"></i>
+        </button>
+    `;
+    document.body.appendChild(notification);
+
+    // 5秒后自动消失
+    setTimeout(function() {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 5000);
 }
 
 function updateWrongCount() {
@@ -275,6 +392,7 @@ function selectOption(q, l, m) {
     } else {
         userAnswers[q] = [l];
     }
+    saveProgress();  // 保存答题进度
     renderQuestions();
 }
 
@@ -294,6 +412,7 @@ function submitSingleAnswer(qId) {
         wrongQuestions[qId] = true;
     }
     updateWrongCount();
+    saveProgress();  // 保存答题进度
 
     renderQuestions();
 }
@@ -353,6 +472,7 @@ function submitPageAnswers() {
         document.getElementById('pageResultModal').classList.remove('hidden');
     }
 
+    saveProgress();  // 保存答题进度
     renderQuestions();
 }
 
@@ -403,7 +523,7 @@ function renderPagination(t) {
     c.innerHTML = h;
 }
 
-function goToPage(p) { currentPage = p; renderQuestions(); window.scrollTo(0, 0); }
+function goToPage(p) { currentPage = p; saveProgress(); renderQuestions(); window.scrollTo(0, 0); }
 
 function filterByType(t) {
     currentFilter = t;
@@ -418,6 +538,7 @@ function filterByType(t) {
         }
     }
 
+    saveProgress();  // 保存筛选状态
     renderQuestions();
     var btns = {'all':'btnAll', '单选':'btnSingle', '多选':'btnMulti', '判断':'btnJudge', 'wrong':'btnWrong'};
     for (var key in btns) {
@@ -435,8 +556,22 @@ function clearAll() {
         showAnswerQuestions = {};
         wrongQuestions = {};
         currentPage = 1;
+        currentFilter = 'all';
+        // 清除 localStorage
+        localStorage.removeItem(STORAGE_KEYS.userAnswers);
+        localStorage.removeItem(STORAGE_KEYS.submittedQuestions);
+        localStorage.removeItem(STORAGE_KEYS.wrongQuestions);
+        localStorage.removeItem(STORAGE_KEYS.currentPage);
+        localStorage.removeItem(STORAGE_KEYS.currentFilter);
         if (quizMode) closeQuiz();
         updateWrongCount();
+        document.getElementById('searchInput').value = '';
+        // 重置筛选按钮状态
+        var btns = {'all':'btnAll', '单选':'btnSingle', '多选':'btnMulti', '判断':'btnJudge', 'wrong':'btnWrong'};
+        for (var key in btns) {
+            var el = document.getElementById(btns[key]);
+            el.className = 'px-4 py-2 ' + (key === 'all' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700') + ' rounded';
+        }
         renderQuestions();
     }
 }
